@@ -139,4 +139,31 @@ describe('a receiver is read by its binding in scope at the call', () => {
     ]);
     expect(methodCalls(graph, 'src/later.jsx')).toEqual(['stop -> Gauge::close']);
   }, 120_000);
+
+  it('recognizes a nearer binding across later declarators and destructuring defaults (#3293)', async () => {
+    const graph = await index({
+      'package.json': JSON.stringify({ name: 'app', dependencies: { 'react-dom': '^18.0.0' } }),
+      'src/chart.tsx': 'export class Chart {\n  render() { return 1; }\n}\n',
+      'src/views.tsx':
+        'import { createRoot, type Root } from "react-dom/client";\nimport { Chart } from "./chart";\n' +
+        'let root: Root | null = null;\n' +
+        'export function laterDeclarator() {\n' +
+        '  let n = 0, root = new Chart();\n' +
+        '  return root.render();\n' +
+        '}\n' +
+        'export function destructuredDefault(opt: any) {\n' +
+        '  const { root = new Chart() } = opt;\n' +
+        '  return root.render();\n' +
+        '}\n' +
+        'export function destructuredAfterDefault(opt: any) {\n' +
+        '  const { x = 1, root } = opt;\n' +
+        '  return root.render();\n' +
+        '}\n',
+    });
+    expect(methodCalls(graph, 'src/views.tsx')).toEqual([
+      'destructuredAfterDefault -> Chart::render',
+      'destructuredDefault -> Chart::render',
+      'laterDeclarator -> Chart::render',
+    ]);
+  }, 120_000);
 });

@@ -13877,6 +13877,8 @@ const PARAM_ANGLE = '<(?!\\s)(?:=>|=(?!>)|[^<>=]|<(?:=>|=(?!>)|[^<>=])*>)*>';
 const PARAM_PART = `(?:=>|=(?!>)|[^,(){}\\[\\]<>=]|<(?=\\s)|>(?=[\\s=])|${PARAM_PAREN}|${PARAM_BRACE}|${PARAM_BRACKET}|${PARAM_ANGLE})`;
 /** A TypeScript parameter property's modifiers: `constructor(private readonly store: Store)`. */
 const PARAM_MODIFIERS = '(?:(?:public|private|protected|readonly|override)\\s+)*';
+/** Earlier declarators before the target variable in a `const`/`let`/`var` list (#3293). */
+const PREV_VAR_DECL = `(?:\\s*(?:[\\w$]+|${PARAM_BRACE}|${PARAM_BRACKET})(?:\\s*:[^=,;]+)?(?:\\s*=(?:[^,;(){}\\[\\]]|${PARAM_PAREN}|${PARAM_BRACE}|${PARAM_BRACKET})*)?\\s*,\\s*)*`;
 
 function localBindingPatterns(name: string, flags: string): LocalBindingPatterns {
   const n = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -13884,7 +13886,9 @@ function localBindingPatterns(name: string, flags: string): LocalBindingPatterns
     // `const { name } = require('./m')` / `= await import('./m')` binds an IMPORT,
     // not a shadow: the symbol lives in the other file and the call means it.
     decl: new RegExp(
-      '\\b(?:const|let|var)\\s+(?:' + n + '(?![\\w$])|[{\\[][^;=]*?\\b' + n + '(?![\\w$])[^;=]*?[}\\]])\\s*(?:=\\s*([^;\\n]*))?',
+      '\\b(?:const|let|var)\\s+' + PREV_VAR_DECL +
+        '(?:' + n + '(?![\\w$])\\s*(?:\\??\\s*:[^=;]+)?\\s*(?:=\\s*([^;\\n]*))?|' +
+        '[{\\[][^;]*?\\b' + n + '(?![\\w$])[^;]*?[}\\]]\\s*(?:\\??\\s*:[^=;]+)?\\s*=\\s*([^;\\n]*))',
       flags
     ),
     fn: new RegExp('\\b(?:function|class)\\s+' + n + '(?![\\w$])', flags),
@@ -13944,7 +13948,7 @@ function isLocallyBoundJsName(name: string, filePath: string, context: Resolutio
 function bindsAnywhere(source: string, name: string): boolean {
   const { decl, fn, param } = localBindingPatterns(name, 'g');
   for (const m of source.matchAll(decl)) {
-    if (!IMPORT_BINDING_VALUE.test(m[1] ?? '')) return true;
+    if (!IMPORT_BINDING_VALUE.test(m[1] ?? m[2] ?? '')) return true;
   }
   const n = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   return fn.test(source) || param.test(source) || new RegExp('(?:^|[^\\w$.])' + n + '\\s*=>').test(source);
@@ -13985,7 +13989,7 @@ function bindsAtSites(source: string, name: string, sites: LocalBindingSites): b
     const m = decl.exec(source);
     if (!m) continue;
     from = at + m[0].length;
-    if (!IMPORT_BINDING_VALUE.test(m[1] ?? '')) return true;
+    if (!IMPORT_BINDING_VALUE.test(m[1] ?? m[2] ?? '')) return true;
   }
   for (const at of sites.fnDecls) {
     fn.lastIndex = at;
@@ -23868,7 +23872,8 @@ function jsBindingSites(name: string, file: JsScopeFile): JsBindingSite[] {
       continue;
     }
     // `const x = require('./x')` binds an import, which the file's imports answer for.
-    const plain = !/^(?:const|let|var)\s+[{[]/.test(m[0]) && !IMPORT_BINDING_VALUE.test(m[1] ?? '');
+    const rhs = m[1] ?? m[2] ?? '';
+    const plain = m[2] === undefined && !IMPORT_BINDING_VALUE.test(rhs);
     sites.push({ ...blockOf(at), at, kind: plain ? 'declaration' : 'other' });
   }
   for (const at of file.fnDecls) {
@@ -24024,7 +24029,7 @@ function jsParameterReading(name: string, site: JsBindingSite, file: JsScopeFile
  */
 function jsDeclarationReading(name: string, site: JsBindingSite, file: JsScopeFile): JsBindingReading | null {
   const { code } = file;
-  const head = new RegExp(`(?:const|let|var)\\s+${escapeRegExp(name)}(?![\\w$])\\s*(?:!?\\s*:\\s*${TS_ANNOTATED_TYPE})?`, 'y');
+  const head = new RegExp(`(?:const|let|var)\\s+${PREV_VAR_DECL}${escapeRegExp(name)}(?![\\w$])\\s*(?:!?\\s*:\\s*${TS_ANNOTATED_TYPE})?`, 'y');
   head.lastIndex = site.at;
   const m = head.exec(code);
   if (!m) return null;
